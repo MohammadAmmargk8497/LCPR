@@ -1,4 +1,5 @@
 import torch
+import random
 from tools.runner import Trainer
 from tools.utils import load_config, check_path, check_dir
 from torchvision.models import ResNet18_Weights
@@ -67,11 +68,19 @@ def main():
     whole_val_loader = DataLoader(dataset=whole_val_set, batch_size=1, shuffle=False,
                                   num_workers=num_workers_test)
 
+    # =========================Matformer Granularities=========================
+    granularities = [
+        {'scale': 0.25, 'mid_channel_scale': 0.25},
+        {'scale': 0.5,  'mid_channel_scale': 0.5},
+        {'scale': 0.75, 'mid_channel_scale': 0.75},
+        {'scale': 1.0,  'mid_channel_scale': 1.0}
+    ]
+
     model = LCPR.create(weights=ResNet18_Weights.DEFAULT)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     trainer = Trainer(model, train_loader, whole_train_loader, whole_val_set, whole_val_loader, device,
                       num_epochs, resume_path, log, log_dir, ckpt_dir, cache_dir,
-                      resume_scheduler, lr, step_size, gamma, margin)
+                      resume_scheduler, lr, step_size, gamma, margin, granularities)
     trainer.train()
 
 

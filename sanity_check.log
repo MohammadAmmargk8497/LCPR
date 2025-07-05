@@ -1,0 +1,34 @@
+2025-07-05T20:45:32.658602+0530 INFO --- Running Sanity Check & Cost Analysis for LCPR Model ---
+2025-07-05T20:45:32.658774+0530 INFO Using device: cpu
+2025-07-05T20:45:32.919274+0530 INFO [SUCCESS] Model created and moved to device.
+2025-07-05T20:45:32.919984+0530 INFO Total trainable parameters in the universal model: 31,139,651
+2025-07-05T20:45:32.953575+0530 INFO Created dummy camera input with shape: torch.Size([1, 6, 3, 256, 704])
+2025-07-05T20:45:32.953736+0530 INFO Created dummy LiDAR input with shape: torch.Size([1, 1, 32, 1056])
+2025-07-05T20:45:32.953802+0530 INFO 
+--- Testing granularity: Smallest (S=0.25, M=0.25) ---
+2025-07-05T20:45:32.953901+0530 INFO Model configured for sub-network: Smallest (S=0.25, M=0.25)
+2025-07-05T20:45:32.954649+0530 INFO Active trainable parameters: 27,190,771 (87.32%)
+2025-07-05T20:45:33.710262+0530 INFO [SUCCESS] Forward pass completed for Smallest (S=0.25, M=0.25). Output shape: torch.Size([1, 256])
+2025-07-05T20:45:33.710432+0530 INFO 
+--- Testing granularity: Medium (S=0.75, M=0.75) ---
+2025-07-05T20:45:33.710543+0530 INFO Model configured for sub-network: Medium (S=0.75, M=0.75)
+2025-07-05T20:45:33.711302+0530 INFO Active trainable parameters: 28,761,811 (92.36%)
+2025-07-05T20:45:34.317862+0530 INFO [SUCCESS] Forward pass completed for Medium (S=0.75, M=0.75). Output shape: torch.Size([1, 256])
+2025-07-05T20:45:34.318053+0530 INFO 
+--- Testing granularity: Largest (S=1.0, M=1.0) ---
+2025-07-05T20:45:34.318180+0530 INFO Model configured for sub-network: Largest (S=1.0, M=1.0)
+2025-07-05T20:45:34.318998+0530 INFO Active trainable parameters: 29,743,171 (95.52%)
+2025-07-05T20:45:34.990299+0530 INFO [SUCCESS] Forward pass completed for Largest (S=1.0, M=1.0). Output shape: torch.Size([1, 256])
+2025-07-05T20:45:34.990476+0530 INFO 
+--- Testing granularity: Mixed (Greedy Search Style) ---
+2025-07-05T20:45:34.990592+0530 INFO Model configured for sub-network: Mixed (Greedy Search Style)
+2025-07-05T20:45:34.991364+0530 INFO Active trainable parameters: 29,588,659 (95.02%)
+2025-07-05T20:45:35.586129+0530 INFO [SUCCESS] Forward pass completed for Mixed (Greedy Search Style). Output shape: torch.Size([1, 256])
+2025-07-05T20:45:35.586324+0530 INFO 
+--- Sanity Check & Cost Analysis Summary ---
+2025-07-05T20:45:35.586396+0530 INFO [SUCCESS] All forward pass checks completed successfully!
+2025-07-05T20:45:35.586451+0530 INFO Computational costs for different granularities:
+2025-07-05T20:45:35.586506+0530 INFO Computational costs for different granularities:- Smallest (S=0.25, M=0.25): 0.6063s | Reduction: -25.42%
+2025-07-05T20:45:35.586559+0530 INFO Computational costs for different granularities:- Medium (S=0.75, M=0.75): 0.4974s | Reduction: -2.88%
+2025-07-05T20:45:35.586607+0530 INFO Computational costs for different granularities:- Largest (S=1.0, M=1.0): 0.4834s | Reduction: 0.00%
+2025-07-05T20:45:35.586654+0530 INFO Computational costs for different granularities:- Mixed (Greedy Search Style): 0.4419s | Reduction: 8.60%

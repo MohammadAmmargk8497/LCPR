@@ -1,5 +1,6 @@
 import h5py
 import torch
+import random
 from torch import nn
 from torch.optim import Adam, lr_scheduler
 import pickle
@@ -15,7 +16,7 @@ import gc
 class Trainer:
     def __init__(self, model, train_loader, whole_train_loader, whole_val_set, whole_val_loader,
                  device, num_epochs, resume_path, log, log_dir, ckpt_dir, cache_dir,
-                 resume_scheduler, lr, step_size, gamma, margin):
+                 resume_scheduler, lr, step_size, gamma, margin, granularities):
         self.train_loader = train_loader
         self.whole_train_loader = whole_train_loader
         self.whole_val_set = whole_val_set
@@ -24,6 +25,7 @@ class Trainer:
         self.optimizer = None
         self.scheduler = None
         self.device = device
+        self.granularities = granularities
 
         self.num_epochs = num_epochs
         self.resume_path = resume_path
@@ -91,6 +93,12 @@ class Trainer:
                 if input_dict is None:
                     continue
                 used_num += 1
+
+                # --- MatFormer Training Step ---
+                active_granularity_config = random.choice(self.granularities)
+                active_granularities = [active_granularity_config] * 4
+                self.model.configure_subnetwork(active_granularities)
+
                 camera_feature = input_dict['camera_feature'].squeeze(0).to(self.device)
 
                 lidar_feature = input_dict['lidar_feature'].squeeze(0).to(self.device)
@@ -185,7 +193,7 @@ class Trainer:
             print('recall@1: {:.2f}\t'.format(recalls[1]), end='')
             print('recall@5: {:.2f}\t'.format(recalls[5]), end='')
             print('recall@10: {:.2f}\t'.format(recalls[10]), end='')
-            print('recall@20: {:.2f}\t'.format(recalls[20]))
+            print('recall@20: {:.2f}'.format(recalls[20]))
 
             return recalls
 
