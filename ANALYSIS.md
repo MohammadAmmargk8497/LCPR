@@ -30,18 +30,18 @@ We can introduce elasticity into the `fusion_block` in two key areas, inspired b
 The `VertConv` module contains 1D convolutions with a `mid_channels` parameter that defines the width of its internal layers. This is analogous to the `d_ff` hidden dimension in a standard Transformer's FFN.
 
 *   **Implementation:** We will modify `VertConv` to support a nested structure on its channel dimensions. For example, we can define four granularities: `mid_channels` of `{64, 128, 192, 256}`. The weight matrices for the smaller channel counts will be slices of the largest one. A model using 64 channels would use the first 64 channels of the universal 256-channel model's weights.
-*   **Benefit:** This directly applies the core MatFormer idea to the most computationally analogous part of the `fusion_block`.
+*   **Benefit:** This directly applies the core MatFormer idea to the most computationally analogous part of the `fusion_block`. We will call it **MatConv**
 
 **2. Nested Attention Heads (As suggested in MatFormer):**
-The `MultiHeadAttention` module in the `fusion_block` uses a fixed number of attention heads (`n_head=4`). The MatFormer paper explicitly mentions that its nesting principle can be applied to attention heads.
+The `MultiHeadAttention` module in the `fusion_block` uses a fixed number of attention heads (`n_head=4`). The MatFormer paper explicitly mentions that its nesting principle can be applied to attention heads. Moreover these heads will have total size of ```head_size*num_heads```
 
-*   **Implementation:** We will modify `MultiHeadAttention` to support a variable number of heads, e.g., `{1, 2, 3, 4}`. The weight matrices for the query, key, and value projections for the 1-head model would be a subset of the weights for the 2-head model, and so on.
+*   **Implementation:** We will modify `MultiHeadAttention` to support a variable number of combined head size, e.g., `{1, 2, 3, 4}`. The weight matrices for the query, key, and value projections will be a subset of this combined head size. 
 *   **Benefit:** This provides another dimension for the architecture search, allowing it to tune the complexity of the attention mechanism itself at each fusion stage.
 
 ### Training and Architecture Search
 
-*   **Training:** We will adopt the MatFormer training strategy. At each training step, we will randomly sample a granularity (e.g., a specific number of `mid_channels` and attention heads) and apply it uniformly across all four `fusion_block`s. We will then compute the loss and update the weights of the universal model. This ensures all sub-models are trained effectively.
-*   **Greedy Search (Mix'n'Match):** Your custom greedy algorithm will perform the "Mix'n'Match" step described in the paper. For a given parameter budget, it will search for the optimal combination of granularities across the four different `fusion_block`s (e.g., `fusion_block_1` uses 128 channels, `fusion_block_2` uses 256, etc.) to create the most accurate specialized sub-model.
+*   **Training:** We will adopt the MatFormer training strategy. At each training step, we will randomly sample a granularity (e.g., a specific number of `mid_channels` and attention head size) and apply it uniformly across all four `fusion_block`s. We will then compute the loss and update the weights of the universal model. This ensures all sub-models are trained effectively.
+*   **Greedy Search:**  Custom Algorithm for this. Matconv and Matformer of MultiheadAttention have different granularity control parameter, ```S``` and ```M`` respectively. 
 
 ## 3. Computational Profiling
 
@@ -99,4 +99,53 @@ This table shows the memory allocated by each low-level PyTorch operation during
 Self CPU time total: 685.050ms
 ```
 
-This updated analysis provides a clear path forward for integrating the elastic principles of MatFormer into the LCPR architecture, enabling your greedy search algorithm.
+## 4. Architectural Redesign: Replacing ResNet with MatViT Encoders
+
+### 4.1. Motivation
+
+The current architecture uses a single ResNet18 backbone to process a panoramic concatenation of six camera images. While effective, this approach has limitations:
+- **Early Blending of Information:** Concatenating images before feature extraction might dilute unique, view-specific information that is critical for robust place recognition.
+- **Lack of Specialization:** A single backbone must learn features applicable to all six views (front, back, sides), potentially limiting its ability to specialize.
+- **Mismatch with Matformer Philosophy:** The monolithic ResNet backbone does not align well with the modular and elastic principles of Matformer, which favor composing networks from smaller, interchangeable blocks.
+
+To address this, we propose a significant architectural shift: replacing the single ResNet backbone with six independent, Matformer-style Vision Transformer (MatViT) encoders, one for each camera view. This change will enable more powerful, specialized, and flexible feature extraction from the camera modality before fusion with LiDAR data.
+
+### 4.2. Proposed Architecture
+
+The new architecture will be composed of three main parts: independent image encoders, a LiDAR encoder, and a modified fusion network.
+
+**1. Independent MatViT Image Encoders:**
+- The `resnet18` backbone will be completely removed.
+- It will be replaced by a `nn.ModuleList` containing six separate `MatViT` encoders. Each encoder will process one of the six input camera images.
+- Each `MatViT` will be a standard Vision Transformer composed of:
+    - A patch embedding layer.
+    - A series of Transformer blocks (Multi-Head Self-Attention and MLP).
+    - A final `[CLS]` token for image representation.
+- **Elasticity:** Crucially, each `MatViT` will be a "Matformer" itself, with nested subnetworks. This will allow for dynamic scaling of:
+    - **Depth:** The number of active Transformer blocks.
+    - **Width:** The embedding dimension (`d_model`).
+    - **MLP Ratio:** The expansion factor in the feed-forward layers.
+    - **Number of Heads:** The number of attention heads in the self-attention mechanism.
+
+**2. LiDAR Encoder:**
+- The LiDAR processing stream will remain largely unchanged in its initial layers. The existing architecture (`conv_l`, `layer2_l`, `layer3_l`, `layer4_l`) is effective at extracting relevant features from the 2D range image and will be retained.
+
+**3. Fusion Strategy:**
+- The fusion mechanism must be adapted to handle the outputs of the six MatViT encoders instead of a single feature map.
+- **Camera Feature Fusion:** The `[CLS]` tokens from each of the six MatViT encoders will be extracted and concatenated. This will create a single, rich feature vector of size `6 * d_model` that represents the combined visual information from all camera views.
+- **Camera-LiDAR Fusion:** This concatenated camera feature vector will then be fused with the output of the LiDAR stream. The existing `fusion_block` can be repurposed to attend between the fused camera vector and the LiDAR feature vector.
+
+### 4.3. New Data Flow
+
+1.  **Input:** 1x Batch of (6 Camera Images, 1 LiDAR Range Image).
+2.  **Camera Path:** Each of the 6 camera images is passed through its dedicated `MatViT` encoder.
+3.  **Image Feature Aggregation:** The `[CLS]` token is taken from the output of each of the 6 MatViTs. These tokens are concatenated to form a single panoramic camera descriptor.
+4.  **LiDAR Path:** The LiDAR range image is processed through the existing convolutional layers to produce a LiDAR feature map.
+5.  **Multi-Modal Fusion:** The aggregated camera descriptor and the LiDAR feature map are fed into the sequence of `fusion_block`s, which will now perform attention between the two modalities.
+6.  **Global Descriptor:** The rest of the network (`VertConv`, `NetVLAD`, `eca_layer`) will process the fused features to generate the final 256-dim global descriptor, as before.
+
+### 4.4. Training and Architecture Search
+
+- **Matformer Training:** The training strategy will be updated. At each step, a random granularity (e.g., a specific depth, width, MLP ratio) will be sampled and applied **uniformly across all six MatViT encoders**. This ensures that all possible sub-networks are trained.
+- **Greedy Search:** The greedy architecture search will now have a significantly larger and more complex search space. The algorithm will need to be adapted to find the optimal configuration (depth, width, etc.) for the MatViT encoders in addition to the existing elastic parameters in the fusion blocks.
+
