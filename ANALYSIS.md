@@ -99,53 +99,57 @@ This table shows the memory allocated by each low-level PyTorch operation during
 Self CPU time total: 685.050ms
 ```
 
-## 4. Architectural Redesign: Replacing ResNet with MatViT Encoders
+## 4. Implemented Architecture: LCPR-MatViT
 
-### 4.1. Motivation
+Following the initial analysis, the architecture was redesigned to replace the monolithic ResNet backbone with a more flexible and powerful Matformer-style Vision Transformer (MatViT) setup. This section describes the implemented `LCPR_MatViT` model as found in `modified_lcpr.py`.
 
-The current architecture uses a single ResNet18 backbone to process a panoramic concatenation of six camera images. While effective, this approach has limitations:
-- **Early Blending of Information:** Concatenating images before feature extraction might dilute unique, view-specific information that is critical for robust place recognition.
-- **Lack of Specialization:** A single backbone must learn features applicable to all six views (front, back, sides), potentially limiting its ability to specialize.
-- **Mismatch with Matformer Philosophy:** The monolithic ResNet backbone does not align well with the modular and elastic principles of Matformer, which favor composing networks from smaller, interchangeable blocks.
-
-To address this, we propose a significant architectural shift: replacing the single ResNet backbone with six independent, Matformer-style Vision Transformer (MatViT) encoders, one for each camera view. This change will enable more powerful, specialized, and flexible feature extraction from the camera modality before fusion with LiDAR data.
-
-### 4.2. Proposed Architecture
-
-The new architecture will be composed of three main parts: independent image encoders, a LiDAR encoder, and a modified fusion network.
+### 4.1. Core Components
 
 **1. Independent MatViT Image Encoders:**
-- The `resnet18` backbone will be completely removed.
-- It will be replaced by a `nn.ModuleList` containing six separate `MatViT` encoders. Each encoder will process one of the six input camera images.
-- Each `MatViT` will be a standard Vision Transformer composed of:
-    - A patch embedding layer.
-    - A series of Transformer blocks (Multi-Head Self-Attention and MLP).
-    - A final `[CLS]` token for image representation.
-- **Elasticity:** Crucially, each `MatViT` will be a "Matformer" itself, with nested subnetworks. This will allow for dynamic scaling of:
-    - **Depth:** The number of active Transformer blocks.
-    - **Width:** The embedding dimension (`d_model`).
-    - **MLP Ratio:** The expansion factor in the feed-forward layers.
-    - **Number of Heads:** The number of attention heads in the self-attention mechanism.
+- The original `resnet18` backbone for image processing has been replaced by a `nn.ModuleList` containing six independent `MatViT` encoders.
+- Each encoder processes one of the six input camera images, allowing for specialized feature extraction from each view before fusion.
+- The `MatViT` module is a Vision Transformer with built-in elasticity, allowing for dynamic scaling of its depth and width (detailed in Section 5).
 
 **2. LiDAR Encoder:**
-- The LiDAR processing stream will remain largely unchanged in its initial layers. The existing architecture (`conv_l`, `layer2_l`, `layer3_l`, `layer4_l`) is effective at extracting relevant features from the 2D range image and will be retained.
+- The LiDAR processing stream remains architecturally consistent with the original LCPR, retaining the initial `Conv2d` and subsequent ResNet blocks (`layer2_l`, `layer3_l`, `layer4_l`) to extract features from the 2D range image.
 
 **3. Fusion Strategy:**
-- The fusion mechanism must be adapted to handle the outputs of the six MatViT encoders instead of a single feature map.
-- **Camera Feature Fusion:** The `[CLS]` tokens from each of the six MatViT encoders will be extracted and concatenated. This will create a single, rich feature vector of size `6 * d_model` that represents the combined visual information from all camera views.
-- **Camera-LiDAR Fusion:** This concatenated camera feature vector will then be fused with the output of the LiDAR stream. The existing `fusion_block` can be repurposed to attend between the fused camera vector and the LiDAR feature vector.
+- The fusion mechanism was adapted to handle the output from the six parallel MatViT encoders.
+- Instead of using a single `[CLS]` token, the entire output sequence of patch embeddings from each MatViT is taken and reshaped back into a 2D feature map using a custom `Reshaper` module.
+- These six feature maps (one for each camera view) are then concatenated along the batch dimension.
+- A final projection `nn.Conv2d` layer standardizes the channel dimension of the concatenated image features before they are fed into the first fusion block.
 
-### 4.3. New Data Flow
+### 4.2. Data Flow in `LCPR_MatViT`
 
-1.  **Input:** 1x Batch of (6 Camera Images, 1 LiDAR Range Image).
-2.  **Camera Path:** Each of the 6 camera images is passed through its dedicated `MatViT` encoder.
-3.  **Image Feature Aggregation:** The `[CLS]` token is taken from the output of each of the 6 MatViTs. These tokens are concatenated to form a single panoramic camera descriptor.
-4.  **LiDAR Path:** The LiDAR range image is processed through the existing convolutional layers to produce a LiDAR feature map.
-5.  **Multi-Modal Fusion:** The aggregated camera descriptor and the LiDAR feature map are fed into the sequence of `fusion_block`s, which will now perform attention between the two modalities.
-6.  **Global Descriptor:** The rest of the network (`VertConv`, `NetVLAD`, `eca_layer`) will process the fused features to generate the final 256-dim global descriptor, as before.
+1.  **Input:** A batch containing 6 camera images and 1 LiDAR range image.
+2.  **Camera Path:** Each of the 6 camera images is passed through its dedicated `MatViT` encoder. The images are resized to 224x224 to match the MatViT input size.
+3.  **Image Feature Reshaping:** The output sequence from each MatViT is passed to a `Reshaper` module, which converts the sequence of embeddings back into a 2D feature map (e.g., `[B, 192, 14, 14]`).
+4.  **Feature Concatenation:** The six resulting feature maps are concatenated into a single tensor.
+5.  **Projection:** The concatenated feature map is passed through a `Conv2d` layer to reduce its channel dimension (e.g., from 192 to 64) to match the LiDAR stream's feature dimension.
+6.  **LiDAR Path:** The LiDAR range image is processed through its initial `Conv2d` layer.
+7.  **Multi-Modal Fusion:** The projected image features and the LiDAR features are fed into the sequence of four `fusion_block`s, interspersed with ResNet layers for both modalities, as in the original architecture.
+8.  **Global Descriptor Generation:** The final fused features from both streams are processed by `VertConv`, `NetVLAD`, and an `eca_layer` to produce the final 256-dim global descriptor.
 
-### 4.4. Training and Architecture Search
+## 5. Matformer-style Elasticity in LCPR-MatViT
 
-- **Matformer Training:** The training strategy will be updated. At each step, a random granularity (e.g., a specific depth, width, MLP ratio) will be sampled and applied **uniformly across all six MatViT encoders**. This ensures that all possible sub-networks are trained.
-- **Greedy Search:** The greedy architecture search will now have a significantly larger and more complex search space. The algorithm will need to be adapted to find the optimal configuration (depth, width, etc.) for the MatViT encoders in addition to the existing elastic parameters in the fusion blocks.
+The `LCPR_MatViT` model integrates Matformer principles at multiple levels, allowing for dynamic adjustment of the network's size and complexity during training and inference. This elasticity is primarily implemented in the `MatViT` encoders and the `fusion_block`s.
 
+### 5.1. MatViT Elasticity
+
+The `MatViT` class is designed to be elastic in both depth and width. This is controlled by its `configure_subnetwork` method.
+
+-   **Depth Scaling:** A `depth_scale` parameter controls the number of active Transformer blocks. `self.current_depth` is set to `int(self.depth * depth_scale)`, and only the first `current_depth` blocks are used in the forward pass. This allows for creating smaller sub-networks by simply using fewer layers.
+
+-   **Width Scaling:** A `width_scale` parameter controls the hidden dimension within each Transformer block. This scale is passed down to the `Attention` and `Mlp` modules inside each block.
+
+### 5.2. Elastic Attention and MLP Layers
+
+The core of the width elasticity lies in the `Attention` and `Mlp` modules, which use sliced linear layers to simulate smaller models without requiring separate weights.
+
+-   **`Mlp` Layer:** The `forward` pass computes `current_hidden_features` based on `width_scale`. It then uses `F.linear` with sliced weight and bias tensors (`self.fc1.weight[:current_hidden_features, :]`) to perform the computation only on the active portion of the network.
+
+-   **`Attention` Layer:** Similarly, the `forward` pass calculates the `current_head_dim` based on `width_scale`. The QKV projection is performed using a sliced weight tensor (`self.qkv.weight[:current_qkv_dim, :]`), and the output projection is also sliced (`self.proj.weight[:, :current_dim]`). This effectively reduces the embedding dimension and the size of the attention mechanism.
+
+### 5.3. Fusion Block Elasticity
+
+The `LCPR_MatViT` model retains the elasticity of the original `fusion_block`s. The main `configure_subnetwork` method accepts granularities for the fusion blocks, which in turn configure the `mid_channel_scale` of the `VertConv` modules and the `scale` of the `MultiHeadAttention` modules. This allows for a multi-dimensional search space where the complexity of both the image encoders and the fusion layers can be tuned independently.

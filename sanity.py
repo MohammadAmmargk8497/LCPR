@@ -110,7 +110,7 @@ def run_sanity_check():
         logger.info("[SUCCESS] All forward pass checks completed successfully!")
         logger.info("Computational costs for different granularities:")
         print("\n--- Computational Cost Comparison ---")
-        largest_cost = results["Largest (ViT Depth=1.0, Fusion=1.0)"]
+        largest_cost = results["Largest (ViT Depth=1.0, Width=1.0, Fusion=1.0)"]
         for name, cost in results.items():
             reduction = (1 - (cost / largest_cost)) * 100
             print(f"- {name}: {cost / 1e6:.4f}s | Reduction: {reduction:.2f}%")

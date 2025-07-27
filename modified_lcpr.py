@@ -283,11 +283,11 @@ class Attention(nn.Module):
         # --- Sliced Forward Pass ---
         # QKV: Slice output dimension
         current_qkv_dim = current_dim * 3
-        qkv = F.linear(x, self.qkv.weight[:current_qkv_dim, :], self.qkv.bias[:current_qkv_dim])
+        qkv = F.linear(x, self.qkv.weight[:current_qkv_dim, :], self.qkv.bias[:current_qkv_dim]) #weight slicing 
         qkv = qkv.reshape(B, N, 3, self.num_heads, current_head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
 
-        attn = (q @ k.transpose(-2, -1)) * (self.scale / (self.width_scale**0.5)) # Adjust scale for smaller dims
+        attn = (q @ k.transpose(-2, -1)) * (self.scale / (self.width_scale**0.5)) # needed to be reviewed (can use current_head_dim**-0.5 instead of self.scale/self.swidth_scale**0.5))
 
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
